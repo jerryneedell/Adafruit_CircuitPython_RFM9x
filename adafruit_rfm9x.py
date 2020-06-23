@@ -228,6 +228,14 @@ class RFM9x:
 
     dio0_mapping = _RegisterBits(_RH_RF95_REG_40_DIO_MAPPING1, offset=6, bits=2)
 
+    tx_done = _RegisterBits(_RH_RF95_REG_12_IRQ_FLAGS, offset=3, bits=1)
+
+    rx_done = _RegisterBits(_RH_RF95_REG_12_IRQ_FLAGS, offset=6, bits=1)
+
+    crc_error = _RegisterBits(_RH_RF95_REG_12_IRQ_FLAGS, offset=5, bits=1)
+
+    irq_register = _RegisterBits(_RH_RF95_REG_12_IRQ_FLAGS, offset=0, bits=8)
+
     bw_bins = (7800, 10400, 15600, 20800, 31250, 41700, 62500, 125000, 250000)
 
     def __init__(
@@ -443,8 +451,8 @@ class RFM9x:
 
     @frequency_mhz.setter
     def frequency_mhz(self, val):
-        if val < 240 or val > 960:
-            raise RuntimeError("frequency_mhz must be between 240 and 960")
+        # frequency_mhz must be between 240 and 960
+        assert 240 <= val <= 960
         # Calculate FRF register 24-bit value.
         frf = int((val * 1000000.0) / _RH_RF95_FSTEP) & 0xFFFFFF
         # Extract byte values and update registers.
@@ -474,8 +482,8 @@ class RFM9x:
     def tx_power(self, val):
         val = int(val)
         if self.high_power:
-            if val < 5 or val > 23:
-                raise RuntimeError("tx_power must be between 5 and 23")
+            # tx_power must be between 5 and 23
+            assert 5 <= val <= 23
             # Enable power amp DAC if power is above 20 dB.
             # Lower setting by 3db when PA_BOOST enabled - see Data Sheet  Section 6.4
             if val > 20:
@@ -588,18 +596,6 @@ class RFM9x:
                 self._read_u8(_RH_RF95_REG_1E_MODEM_CONFIG2) & 0xFB,
             )
 
-    def tx_done(self):
-        """Transmit status"""
-        return (self._read_u8(_RH_RF95_REG_12_IRQ_FLAGS) & 0x8) >> 3
-
-    def rx_done(self):
-        """Receive status"""
-        return (self._read_u8(_RH_RF95_REG_12_IRQ_FLAGS) & 0x40) >> 6
-
-    def crc_error(self):
-        """crc status"""
-        return (self._read_u8(_RH_RF95_REG_12_IRQ_FLAGS) & 0x20) >> 5
-
     def send(
         self,
         data,
@@ -662,7 +658,7 @@ class RFM9x:
         # best that can be done right now without interrupts).
         start = time.monotonic()
         timed_out = False
-        while not timed_out and not self.tx_done():
+        while not timed_out and not self.tx_done:
             if (time.monotonic() - start) >= self.xmit_timeout:
                 timed_out = True
         # Listen again if necessary and return the result packet.
@@ -672,7 +668,7 @@ class RFM9x:
             # Enter idle mode to stop receiving other packets.
             self.idle()
         # Clear interrupt.
-        self._write_u8(_RH_RF95_REG_12_IRQ_FLAGS, 0xFF)
+        self.irq_register = 0xFF
         return not timed_out
 
     def send_with_ack(self, data):
@@ -742,7 +738,7 @@ class RFM9x:
             self.listen()
             start = time.monotonic()
             timed_out = False
-            while not timed_out and not self.rx_done():
+            while not timed_out and not self.rx_done:
                 if (time.monotonic() - start) >= timeout:
                     timed_out = True
         # Payload ready is set, a packet is in the FIFO.
@@ -752,7 +748,7 @@ class RFM9x:
         # Enter idle mode to stop receiving other packets.
         self.idle()
         if not timed_out:
-            if self.enable_crc and self.crc_error():
+            if self.enable_crc and self.crc_error:
                 self.crc_error_count += 1
             else:
                 # Read the data from the FIFO.
@@ -812,5 +808,5 @@ class RFM9x:
             # Enter idle mode to stop receiving other packets.
             self.idle()
         # Clear interrupt.
-        self._write_u8(_RH_RF95_REG_12_IRQ_FLAGS, 0xFF)
+        self.irq_register = 0xFF
         return packet
